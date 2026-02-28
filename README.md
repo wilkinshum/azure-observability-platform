@@ -84,10 +84,13 @@ git clone https://github.com/wilkinshum/azure-observability-platform.git
 cd azure-observability-platform
 
 # Deploy infrastructure (Phase 1)
-az deployment sub create --location eastus2 --template-file infra/main.bicep
+cd infra
+terraform init
+terraform plan -out=tfplan
+terraform apply tfplan
 
 # Run discovery
-cd discovery/scanner
+cd ../discovery/scanner
 pip install -r requirements.txt
 python scan.py
 ```

@@ -30,3 +30,6 @@ dist/
 # Terraform
 .terraform/
 *.tfstate*
+*.tfplan
+.terraform.lock.hcl
+crash.log
