@@ -20,6 +20,20 @@ const cosmosClient = new CosmosClient({
 });
 
 const database = cosmosClient.database(process.env.COSMOS_DATABASE || "observability");
+
+// Subscription ID → friendly name mapping
+const SUBSCRIPTION_NAMES = {
+  "ca2f7910-fe8b-4198-a355-2e888e6455c4": "Identity",
+  "af59af90-87a6-4519-b506-0dea13c007e0": "LZ-Online",
+  "53fb5cd8-a542-46e0-8209-79d690e48482": "Security",
+  "b7587242-8c5e-43be-88ca-a1a2e26bf9fa": "Connect",
+  "b79a44dc-2b5e-4cee-8960-2f6ebd62e32c": "Sub-4",
+  "4819b19b-6d0a-47e1-8595-7f9c1d3250c1": "Management",
+  "f627598e-05c5-4093-8667-5730c4026ea3": "Sub-1",
+  "26c850af-9b58-4518-ad16-038ba91e6a6c": "Connectivity",
+  "832c2234-b1ac-4faf-af30-9525e7ac4a9b": "Sub-10",
+  "c1ab0c6c-e322-418b-abb5-4bc161b97429": "LZ-Corp",
+};
 const resourcesContainer = database.container("resources");
 const relationshipsContainer = database.container("relationships");
 
@@ -48,7 +62,10 @@ app.get("/api/summary", async (req, res) => {
       totalResources: totalRes.resources[0] || 0,
       byType: typeRes.resources.sort((a, b) => b.count - a.count),
       byLocation: locationRes.resources.sort((a, b) => b.count - a.count),
-      bySubscription: subRes.resources,
+      bySubscription: subRes.resources.map(s => ({
+        ...s,
+        name: SUBSCRIPTION_NAMES[s.subscriptionId] || s.subscriptionId,
+      })),
     });
   } catch (err) {
     console.error("Summary error:", err.message);

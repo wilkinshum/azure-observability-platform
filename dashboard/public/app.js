@@ -101,7 +101,7 @@ function renderSubscriptionChart(data) {
   chartSubscriptions = new Chart(ctx, {
     type: "bar",
     data: {
-      labels: data.map((d) => d.subscriptionId.slice(0, 12) + "..."),
+      labels: data.map((d) => d.name || d.subscriptionId.slice(0, 12) + "..."),
       datasets: [{
         label: "Resources",
         data: data.map((d) => d.count),
