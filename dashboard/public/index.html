@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Azure Observability Platform</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+  <nav class="sidebar">
+    <div class="logo">
+      <span class="logo-icon">◉</span>
+      <span class="logo-text">AzObs</span>
+    </div>
+    <ul class="nav-links">
+      <li><a href="#" class="active" data-view="overview">📊 Overview</a></li>
+      <li><a href="#" data-view="resources">🗂️ Resources</a></li>
+      <li><a href="#" data-view="relationships">🔗 Relationships</a></li>
+    </ul>
+    <div class="nav-footer">
+      <span class="version">v1.0.0</span>
+    </div>
+  </nav>
+
+  <main class="content">
+    <!-- Overview View -->
+    <div id="view-overview" class="view active">
+      <div class="page-header">
+        <h1>Overview</h1>
+        <span id="last-scan" class="badge">Loading...</span>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="total-resources">—</div>
+          <div class="stat-label">Total Resources</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="total-types">—</div>
+          <div class="stat-label">Resource Types</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="total-locations">—</div>
+          <div class="stat-label">Locations</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="total-subscriptions">—</div>
+          <div class="stat-label">Subscriptions</div>
+        </div>
+      </div>
+
+      <div class="charts-grid">
+        <div class="chart-card">
+          <h3>Resources by Type (Top 10)</h3>
+          <canvas id="chart-types"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Resources by Location</h3>
+          <canvas id="chart-locations"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card full-width">
+        <h3>Resources by Subscription</h3>
+        <canvas id="chart-subscriptions"></canvas>
+      </div>
+    </div>
+
+    <!-- Resources View -->
+    <div id="view-resources" class="view">
+      <div class="page-header">
+        <h1>Resources</h1>
+      </div>
+
+      <div class="filters">
+        <input type="text" id="search-input" placeholder="Search by name..." class="filter-input">
+        <select id="filter-type" class="filter-select">
+          <option value="">All Types</option>
+        </select>
+        <select id="filter-location" class="filter-select">
+          <option value="">All Locations</option>
+        </select>
+        <button id="btn-search" class="btn btn-primary">Search</button>
+      </div>
+
+      <div class="table-container">
+        <table id="resources-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Location</th>
+              <th>Resource Group</th>
+              <th>Subscription</th>
+              <th>Tags</th>
+            </tr>
+          </thead>
+          <tbody id="resources-body">
+            <tr><td colspan="6" class="loading">Loading resources...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="pagination">
+        <button id="btn-prev" class="btn" disabled>← Previous</button>
+        <span id="page-info">Page 1</span>
+        <button id="btn-next" class="btn">Next →</button>
+      </div>
+    </div>
+
+    <!-- Relationships View -->
+    <div id="view-relationships" class="view">
+      <div class="page-header">
+        <h1>Relationships</h1>
+      </div>
+      <div class="table-container">
+        <table id="relationships-table">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Source</th>
+              <th>Target</th>
+              <th>Metadata</th>
+              <th>Discovered</th>
+            </tr>
+          </thead>
+          <tbody id="relationships-body">
+            <tr><td colspan="5" class="loading">Loading relationships...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Resource Detail Modal -->
+    <div id="resource-modal" class="modal hidden">
+      <div class="modal-content">
+        <button class="modal-close" id="modal-close">✕</button>
+        <h2 id="modal-title">Resource Details</h2>
+        <pre id="modal-body"></pre>
+      </div>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -91,6 +91,19 @@ resource "azurerm_role_assignment" "discovery_log_reader" {
   principal_id         = module.discovery.discovery_identity_principal_id
 }
 
+module "compute" {
+  source                        = "./modules/compute"
+  location                      = azurerm_resource_group.main.location
+  rg_name                       = azurerm_resource_group.main.name
+  prefix                        = var.prefix
+  environment                   = var.environment
+  tags                          = local.common_tags
+  cosmos_endpoint               = module.discovery.cosmos_endpoint
+  cosmos_account_name           = module.discovery.cosmos_account_name
+  discovery_identity_id         = module.discovery.discovery_identity_id
+  appinsights_connection_string = module.log_collection.appinsights_connection_string
+}
+
 output "cosmos_endpoint" {
   value = module.discovery.cosmos_endpoint
 }
@@ -101,4 +114,12 @@ output "discovery_identity_client_id" {
 
 output "log_analytics_workspace_id" {
   value = module.log_collection.workspace_id
+}
+
+output "scanner_function_url" {
+  value = module.compute.function_app_url
+}
+
+output "dashboard_url" {
+  value = module.compute.dashboard_url
 }
