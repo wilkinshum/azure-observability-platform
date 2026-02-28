@@ -1,17 +1,23 @@
 """
 Azure Resource Discovery Scanner
 
+Auth priority:
+  1. Managed Identity (User-Assigned or System-Assigned)
+  2. Service Principal (via environment variables)
+  3. Azure CLI (local dev fallback)
+
 Scans all accessible subscriptions via Azure Resource Graph
-and stores results in Cosmos DB.
+and stores results in Cosmos DB using RBAC (no keys).
 """
 
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any
 
-from azure.identity import DefaultAzureCredential
+from azure.identity import ManagedIdentityCredential, DefaultAzureCredential, ChainedTokenCredential
 from azure.mgmt.resourcegraph import ResourceGraphClient
 from azure.mgmt.resourcegraph.models import QueryRequest, QueryRequestOptions
 from azure.cosmos.aio import CosmosClient
@@ -19,11 +25,14 @@ from azure.cosmos.aio import CosmosClient
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-# Configuration
-COSMOS_ENDPOINT = "https://<your-cosmos>.documents.azure.com:443/"
-DATABASE_NAME = "observability"
-CONTAINER_NAME = "resources"
-RELATIONSHIPS_CONTAINER = "relationships"
+# Configuration via environment variables
+COSMOS_ENDPOINT = os.environ.get("COSMOS_ENDPOINT", "https://<your-cosmos>.documents.azure.com:443/")
+DATABASE_NAME = os.environ.get("COSMOS_DATABASE", "observability")
+CONTAINER_NAME = os.environ.get("COSMOS_CONTAINER", "resources")
+RELATIONSHIPS_CONTAINER = os.environ.get("COSMOS_RELATIONSHIPS_CONTAINER", "relationships")
+
+# Optional: User-Assigned Managed Identity client ID
+MANAGED_IDENTITY_CLIENT_ID = os.environ.get("AZURE_CLIENT_ID", None)
 
 # Resource Graph queries
 QUERIES = {
@@ -79,19 +88,42 @@ QUERIES = {
 }
 
 
+def get_credential():
+    """
+    Build credential chain:
+      1. Managed Identity (user-assigned if AZURE_CLIENT_ID is set, else system-assigned)
+      2. Falls back to DefaultAzureCredential (SPN via env vars, CLI, etc.)
+    """
+    credentials = []
+
+    if MANAGED_IDENTITY_CLIENT_ID:
+        logger.info(f"Adding User-Assigned Managed Identity credential (client_id={MANAGED_IDENTITY_CLIENT_ID})")
+        credentials.append(ManagedIdentityCredential(client_id=MANAGED_IDENTITY_CLIENT_ID))
+    else:
+        logger.info("Adding System-Assigned Managed Identity credential")
+        credentials.append(ManagedIdentityCredential())
+
+    logger.info("Adding DefaultAzureCredential as fallback (SPN / CLI / env vars)")
+    credentials.append(DefaultAzureCredential())
+
+    return ChainedTokenCredential(*credentials)
+
+
 class DiscoveryScanner:
     def __init__(self):
-        self.credential = DefaultAzureCredential()
+        self.credential = get_credential()
         self.graph_client = ResourceGraphClient(self.credential)
         self.scan_timestamp = datetime.now(timezone.utc).isoformat()
         self.scan_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         self.stats = {"resources": 0, "relationships": 0, "errors": 0}
 
     async def init_cosmos(self):
+        """Connect to Cosmos DB using RBAC (Managed Identity). No keys needed."""
         self.cosmos_client = CosmosClient(COSMOS_ENDPOINT, credential=self.credential)
         self.database = self.cosmos_client.get_database_client(DATABASE_NAME)
         self.resources_container = self.database.get_container_client(CONTAINER_NAME)
         self.relationships_container = self.database.get_container_client(RELATIONSHIPS_CONTAINER)
+        logger.info(f"Connected to Cosmos DB: {COSMOS_ENDPOINT} (RBAC auth)")
 
     def query_resource_graph(self, query: str, subscriptions: list[str] | None = None) -> list[dict]:
         """Execute a Resource Graph query with automatic pagination."""

@@ -75,8 +75,28 @@ module "log_collection" {
   tags        = local.common_tags
 }
 
+# Grant discovery identity "Reader" at subscription level for Resource Graph queries
+data "azurerm_subscription" "current" {}
+
+resource "azurerm_role_assignment" "discovery_reader" {
+  scope                = data.azurerm_subscription.current.id
+  role_definition_name = "Reader"
+  principal_id         = module.discovery.discovery_identity_principal_id
+}
+
+# Grant discovery identity "Log Analytics Reader" on the workspace
+resource "azurerm_role_assignment" "discovery_log_reader" {
+  scope                = module.log_collection.workspace_id
+  role_definition_name = "Log Analytics Reader"
+  principal_id         = module.discovery.discovery_identity_principal_id
+}
+
 output "cosmos_endpoint" {
   value = module.discovery.cosmos_endpoint
+}
+
+output "discovery_identity_client_id" {
+  value = module.discovery.discovery_identity_client_id
 }
 
 output "log_analytics_workspace_id" {

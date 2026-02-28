@@ -18,12 +18,26 @@ variable "tags" {
   type = map(string)
 }
 
-resource "azurerm_cosmosdb_account" "main" {
-  name                = "${var.prefix}-${var.environment}-cosmos"
+# User-Assigned Managed Identity for the discovery scanner
+resource "azurerm_user_assigned_identity" "discovery" {
+  name                = "${var.prefix}-${var.environment}-discovery-id"
   location            = var.location
   resource_group_name = var.rg_name
-  offer_type          = "Standard"
-  kind                = "GlobalDocumentDB"
+  tags                = merge(var.tags, { component = "discovery" })
+}
+
+# Cosmos DB Account with system-assigned identity
+resource "azurerm_cosmosdb_account" "main" {
+  name                          = "${var.prefix}-${var.environment}-cosmos"
+  location                      = var.location
+  resource_group_name           = var.rg_name
+  offer_type                    = "Standard"
+  kind                          = "GlobalDocumentDB"
+  local_authentication_disabled = false # Keep keys as fallback, but prefer RBAC
+
+  identity {
+    type = "SystemAssigned"
+  }
 
   consistency_policy {
     consistency_level = "Session"
@@ -39,6 +53,16 @@ resource "azurerm_cosmosdb_account" "main" {
   }
 
   tags = merge(var.tags, { component = "discovery" })
+}
+
+# RBAC: Grant discovery managed identity "Cosmos DB Built-in Data Contributor" on the account
+resource "azurerm_cosmosdb_sql_role_assignment" "discovery_data_contributor" {
+  resource_group_name = var.rg_name
+  account_name        = azurerm_cosmosdb_account.main.name
+  # Cosmos DB Built-in Data Contributor role definition
+  role_definition_id = "${azurerm_cosmosdb_account.main.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+  principal_id       = azurerm_user_assigned_identity.discovery.principal_id
+  scope              = azurerm_cosmosdb_account.main.id
 }
 
 resource "azurerm_cosmosdb_sql_database" "observability" {
@@ -94,4 +118,16 @@ output "cosmos_account_name" {
 
 output "database_name" {
   value = azurerm_cosmosdb_sql_database.observability.name
+}
+
+output "discovery_identity_id" {
+  value = azurerm_user_assigned_identity.discovery.id
+}
+
+output "discovery_identity_client_id" {
+  value = azurerm_user_assigned_identity.discovery.client_id
+}
+
+output "discovery_identity_principal_id" {
+  value = azurerm_user_assigned_identity.discovery.principal_id
 }
