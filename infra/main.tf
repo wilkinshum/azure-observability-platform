@@ -100,8 +100,9 @@ module "compute" {
   tags                          = local.common_tags
   cosmos_endpoint               = module.discovery.cosmos_endpoint
   cosmos_account_name           = module.discovery.cosmos_account_name
-  discovery_identity_id         = module.discovery.discovery_identity_id
-  appinsights_connection_string = module.log_collection.appinsights_connection_string
+  discovery_identity_id              = module.discovery.discovery_identity_id
+  discovery_identity_principal_id    = module.discovery.discovery_identity_principal_id
+  appinsights_connection_string      = module.log_collection.appinsights_connection_string
 }
 
 output "cosmos_endpoint" {
@@ -114,10 +115,6 @@ output "discovery_identity_client_id" {
 
 output "log_analytics_workspace_id" {
   value = module.log_collection.workspace_id
-}
-
-output "scanner_function_url" {
-  value = module.compute.function_app_url
 }
 
 output "dashboard_url" {
