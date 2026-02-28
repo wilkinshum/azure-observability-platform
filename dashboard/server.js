@@ -34,10 +34,10 @@ app.get("/api/summary", async (req, res) => {
     const [totalRes, typeRes, locationRes, subRes] = await Promise.all([
       resourcesContainer.items.query("SELECT VALUE COUNT(1) FROM c").fetchAll(),
       resourcesContainer.items.query(
-        "SELECT c.type, COUNT(1) as count FROM c GROUP BY c.type ORDER BY COUNT(1) DESC"
+        "SELECT c.type, COUNT(1) as count FROM c GROUP BY c.type"
       ).fetchAll(),
       resourcesContainer.items.query(
-        "SELECT c.location, COUNT(1) as count FROM c GROUP BY c.location ORDER BY COUNT(1) DESC"
+        "SELECT c.location, COUNT(1) as count FROM c GROUP BY c.location"
       ).fetchAll(),
       resourcesContainer.items.query(
         "SELECT c.subscriptionId, COUNT(1) as count FROM c GROUP BY c.subscriptionId"
@@ -46,8 +46,8 @@ app.get("/api/summary", async (req, res) => {
 
     res.json({
       totalResources: totalRes.resources[0] || 0,
-      byType: typeRes.resources,
-      byLocation: locationRes.resources,
+      byType: typeRes.resources.sort((a, b) => b.count - a.count),
+      byLocation: locationRes.resources.sort((a, b) => b.count - a.count),
       bySubscription: subRes.resources,
     });
   } catch (err) {
@@ -80,7 +80,7 @@ app.get("/api/resources", async (req, res) => {
       params.push({ name: "@search", value: search.toLowerCase() });
     }
 
-    query += " ORDER BY c.type ASC, c.name ASC OFFSET @offset LIMIT @limit";
+    query += " ORDER BY c.name ASC OFFSET @offset LIMIT @limit";
     params.push({ name: "@offset", value: parseInt(offset) });
     params.push({ name: "@limit", value: parseInt(limit) });
 
