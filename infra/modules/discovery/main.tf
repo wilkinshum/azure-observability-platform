@@ -81,14 +81,9 @@ resource "azurerm_cosmosdb_sql_container" "resources" {
   indexing_policy {
     indexing_mode = "consistent"
 
-    included_path { path = "/type/?" }
-    included_path { path = "/location/?" }
-    included_path { path = "/resourceGroup/?" }
-    included_path { path = "/tags/*" }
-    included_path { path = "/discoveredAt/?" }
+    included_path { path = "/*" }
 
     excluded_path { path = "/properties/*" }
-    excluded_path { path = "/\"_etag\"/?" }
   }
 }
 
