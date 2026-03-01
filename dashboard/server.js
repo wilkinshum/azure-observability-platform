@@ -193,7 +193,7 @@ app.get("/api/network-flows", async (req, res) => {
       params.push({ name: "@port", value: port });
     }
 
-    query += " ORDER BY c.bytesS2D DESC OFFSET 0 LIMIT @limit";
+    query += " OFFSET 0 LIMIT @limit";
     params.push({ name: "@limit", value: parseInt(limit) });
 
     const { resources: flows } = await networkFlowsContainer.items.query({
@@ -210,24 +210,44 @@ app.get("/api/network-flows", async (req, res) => {
 // Get network flow summary stats
 app.get("/api/network-flows/summary", async (req, res) => {
   try {
-    const [totalRes, protocolRes, topPortsRes, topTalkersRes] = await Promise.all([
+    const [totalRes, allFlowsRes] = await Promise.all([
       networkFlowsContainer.items.query("SELECT VALUE COUNT(1) FROM c").fetchAll(),
       networkFlowsContainer.items.query(
-        "SELECT c.protocol, COUNT(1) as count, SUM(c.bytesS2D + c.bytesD2S) as totalBytes FROM c GROUP BY c.protocol"
-      ).fetchAll(),
-      networkFlowsContainer.items.query(
-        "SELECT TOP 10 c.destPort, c.protocol, COUNT(1) as count, SUM(c.bytesS2D + c.bytesD2S) as totalBytes FROM c GROUP BY c.destPort, c.protocol ORDER BY totalBytes DESC"
-      ).fetchAll(),
-      networkFlowsContainer.items.query(
-        "SELECT TOP 20 c.sourceIp, c.destIp, c.destPort, c.protocol, c.bytesS2D, c.bytesD2S, c.allowed, c.denied FROM c ORDER BY c.bytesS2D DESC"
+        "SELECT c.sourceIp, c.destIp, c.destPort, c.protocol, c.bytesS2D, c.bytesD2S, c.allowed, c.denied FROM c"
       ).fetchAll(),
     ]);
 
+    const flows = allFlowsRes.resources;
+
+    // Aggregate by protocol
+    const protoMap = {};
+    flows.forEach(f => {
+      const p = f.protocol || "OTHER";
+      if (!protoMap[p]) protoMap[p] = { protocol: p, count: 0, totalBytes: 0 };
+      protoMap[p].count++;
+      protoMap[p].totalBytes += (f.bytesS2D || 0) + (f.bytesD2S || 0);
+    });
+
+    // Aggregate by port
+    const portMap = {};
+    flows.forEach(f => {
+      const key = `${f.destPort}/${f.protocol}`;
+      if (!portMap[key]) portMap[key] = { destPort: f.destPort, protocol: f.protocol, count: 0, totalBytes: 0 };
+      portMap[key].count++;
+      portMap[key].totalBytes += (f.bytesS2D || 0) + (f.bytesD2S || 0);
+    });
+
+    // Top talkers (sort by bytes desc)
+    const topTalkers = flows
+      .map(f => ({ ...f, totalBytes: (f.bytesS2D || 0) + (f.bytesD2S || 0) }))
+      .sort((a, b) => b.totalBytes - a.totalBytes)
+      .slice(0, 20);
+
     res.json({
       totalFlows: totalRes.resources[0] || 0,
-      byProtocol: protocolRes.resources,
-      topPorts: topPortsRes.resources,
-      topTalkers: topTalkersRes.resources,
+      byProtocol: Object.values(protoMap),
+      topPorts: Object.values(portMap).sort((a, b) => b.totalBytes - a.totalBytes).slice(0, 10),
+      topTalkers,
     });
   } catch (err) {
     console.error("Flow summary error:", err.message);

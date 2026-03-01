@@ -139,23 +139,11 @@ resource "azurerm_cosmosdb_sql_container" "network_flows" {
     indexing_mode = "consistent"
 
     included_path {
-      path = "/sourceIp/*"
-    }
-    included_path {
-      path = "/destIp/*"
-    }
-    included_path {
-      path = "/destPort/*"
-    }
-    included_path {
-      path = "/protocol/*"
-    }
-    included_path {
-      path = "/lastSeen/*"
+      path = "/*"
     }
 
     excluded_path {
-      path = "/*"
+      path = "/\"_etag\"/?"
     }
   }
 }

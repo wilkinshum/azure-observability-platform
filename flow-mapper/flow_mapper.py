@@ -155,7 +155,7 @@ class FlowMapper:
 
             src_ip, dst_ip = p[1], p[2]
             dst_port = p[4]
-            protocol = "TCP" if p[5] == "T" else "UDP" if p[5] == "U" else p[5]
+            protocol = {"T": "TCP", "U": "UDP", "6": "TCP", "17": "UDP"}.get(p[5], p[5])
             decision = p[7]  # A=allowed, D=denied
 
             key = (src_ip, dst_ip, dst_port, protocol)
