@@ -334,3 +334,7 @@ tr { cursor: pointer; }
   .content { margin-left: 0; }
   .stats-grid { grid-template-columns: 1fr; }
 }
+
+/* Flow filters */
+.flow-filters { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+#topology-container svg { background: var(--bg-primary); border-radius: 8px; }

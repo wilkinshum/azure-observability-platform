@@ -36,6 +36,7 @@ const SUBSCRIPTION_NAMES = {
 };
 const resourcesContainer = database.container("resources");
 const relationshipsContainer = database.container("relationships");
+const networkFlowsContainer = database.container("network-flows");
 
 // Serve static frontend
 app.use(express.static(path.join(__dirname, "public")));
@@ -166,6 +167,137 @@ app.get("/api/locations", async (req, res) => {
     ).fetchAll();
     res.json(resources);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Network Flows API ────────────────────────────────────────────────────────
+
+// Get network flows with optional filters
+app.get("/api/network-flows", async (req, res) => {
+  try {
+    const { limit = 200, minBytes = 0, protocol, port } = req.query;
+    let query = "SELECT * FROM c WHERE 1=1";
+    const params = [];
+
+    if (parseInt(minBytes) > 0) {
+      query += " AND (c.bytesS2D + c.bytesD2S) >= @minBytes";
+      params.push({ name: "@minBytes", value: parseInt(minBytes) });
+    }
+    if (protocol) {
+      query += " AND c.protocol = @protocol";
+      params.push({ name: "@protocol", value: protocol.toUpperCase() });
+    }
+    if (port) {
+      query += " AND c.destPort = @port";
+      params.push({ name: "@port", value: port });
+    }
+
+    query += " ORDER BY c.bytesS2D DESC OFFSET 0 LIMIT @limit";
+    params.push({ name: "@limit", value: parseInt(limit) });
+
+    const { resources: flows } = await networkFlowsContainer.items.query({
+      query, parameters: params,
+    }).fetchAll();
+
+    res.json(flows);
+  } catch (err) {
+    console.error("Network flows error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get network flow summary stats
+app.get("/api/network-flows/summary", async (req, res) => {
+  try {
+    const [totalRes, protocolRes, topPortsRes, topTalkersRes] = await Promise.all([
+      networkFlowsContainer.items.query("SELECT VALUE COUNT(1) FROM c").fetchAll(),
+      networkFlowsContainer.items.query(
+        "SELECT c.protocol, COUNT(1) as count, SUM(c.bytesS2D + c.bytesD2S) as totalBytes FROM c GROUP BY c.protocol"
+      ).fetchAll(),
+      networkFlowsContainer.items.query(
+        "SELECT TOP 10 c.destPort, c.protocol, COUNT(1) as count, SUM(c.bytesS2D + c.bytesD2S) as totalBytes FROM c GROUP BY c.destPort, c.protocol ORDER BY totalBytes DESC"
+      ).fetchAll(),
+      networkFlowsContainer.items.query(
+        "SELECT TOP 20 c.sourceIp, c.destIp, c.destPort, c.protocol, c.bytesS2D, c.bytesD2S, c.allowed, c.denied FROM c ORDER BY c.bytesS2D DESC"
+      ).fetchAll(),
+    ]);
+
+    res.json({
+      totalFlows: totalRes.resources[0] || 0,
+      byProtocol: protocolRes.resources,
+      topPorts: topPortsRes.resources,
+      topTalkers: topTalkersRes.resources,
+    });
+  } catch (err) {
+    console.error("Flow summary error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Build IP → resource name lookup from discovered NICs/IPs
+app.get("/api/network-flows/ip-map", async (req, res) => {
+  try {
+    // Query resources that have IP configurations (NICs, Public IPs, VMs, etc.)
+    const { resources } = await resourcesContainer.items.query(
+      "SELECT c.name, c.resourceId, c.type, c.properties FROM c WHERE c.type IN ('microsoft.network/networkinterfaces', 'microsoft.network/publicipaddresses', 'microsoft.network/privateendpoints', 'microsoft.compute/virtualmachines', 'microsoft.network/loadbalancers', 'microsoft.network/applicationgateways', 'microsoft.network/azurefirewalls')"
+    ).fetchAll();
+
+    const ipMap = {};
+
+    for (const r of resources) {
+      const props = r.properties || {};
+
+      // NICs → private IPs
+      if (r.type === "microsoft.network/networkinterfaces") {
+        const ipConfigs = props.ipConfigurations || [];
+        for (const ipc of ipConfigs) {
+          const ip = ipc?.properties?.privateIPAddress;
+          if (ip) ipMap[ip] = r.name;
+        }
+      }
+
+      // Public IPs
+      if (r.type === "microsoft.network/publicipaddresses") {
+        const ip = props.ipAddress;
+        if (ip) ipMap[ip] = r.name;
+      }
+
+      // Private Endpoints
+      if (r.type === "microsoft.network/privateendpoints") {
+        const nicConfigs = props.networkInterfaces || [];
+        // Also check customDnsConfigs for IPs
+        const dnsConfigs = props.customDnsConfigs || [];
+        for (const dc of dnsConfigs) {
+          const ips = dc?.ipAddresses || [];
+          for (const ip of ips) {
+            if (ip) ipMap[ip] = r.name;
+          }
+        }
+      }
+
+      // Load Balancers → frontend IPs
+      if (r.type === "microsoft.network/loadbalancers") {
+        const feConfigs = props.frontendIPConfigurations || [];
+        for (const fe of feConfigs) {
+          const ip = fe?.properties?.privateIPAddress;
+          if (ip) ipMap[ip] = r.name;
+        }
+      }
+
+      // Azure Firewalls
+      if (r.type === "microsoft.network/azurefirewalls") {
+        const feConfigs = props.ipConfigurations || [];
+        for (const fe of feConfigs) {
+          const ip = fe?.properties?.privateIPAddress;
+          if (ip) ipMap[ip] = r.name;
+        }
+      }
+    }
+
+    res.json(ipMap);
+  } catch (err) {
+    console.error("IP map error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
