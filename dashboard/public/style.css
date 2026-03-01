@@ -347,3 +347,6 @@ tr { cursor: pointer; }
 .tag-internal { background: #1e3a5f !important; color: #38bdf8 !important; }
 .tag-external { background: #3b1d1d !important; color: #fbbf24 !important; }
 .row-denied { background: rgba(248, 113, 113, 0.05); }
+.filter-toggle { display: inline-flex; align-items: center; gap: 6px; color: #8b8fa3; font-size: 13px; cursor: pointer; padding: 6px 10px; background: #1e2235; border-radius: 6px; border: 1px solid #2d3044; }
+.filter-toggle:hover { border-color: #6366f1; }
+.filter-toggle input[type="checkbox"] { accent-color: #6366f1; }

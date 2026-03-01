@@ -279,6 +279,7 @@ function esc(str) {
 let chartProtocols = null;
 let chartPorts = null;
 let ipMap = {};
+let azureIps = {};
 let allFlows = [];
 
 const PORT_NAMES = {
@@ -306,12 +307,14 @@ function isPrivateIp(ip) {
 
 async function loadNetworkFlows() {
   try {
-    const [summaryRes, ipMapRes, flowsRes] = await Promise.all([
+    const [summaryRes, ipMapRes, flowsRes, azureIpsRes] = await Promise.all([
       fetch("/api/network-flows/summary").then(r => r.json()),
       fetch("/api/network-flows/ip-map").then(r => r.json()),
       fetch("/api/network-flows?limit=500").then(r => r.json()),
+      fetch("/api/network-flows/azure-ips").then(r => r.json()),
     ]);
     ipMap = ipMapRes;
+    azureIps = azureIpsRes;
     allFlows = flowsRes;
 
     document.getElementById("total-flows").textContent = summaryRes.totalFlows.toLocaleString();
@@ -440,20 +443,25 @@ function resolveIpFull(ip) {
   if (!ip) return "\u2014";
   const name = ipMap[ip];
   if (name) return `${name} (${ip})`;
+  const azLabel = azureIps[ip];
+  if (azLabel) return `${ip} [${azLabel}]`;
   return isPrivateIp(ip) ? `${ip} [private]` : `${ip} [public]`;
 }
+function isAzureIp(ip) { return !!azureIps[ip]; }
 
 async function loadTopology() {
   const protocol = document.getElementById("flow-filter-protocol").value;
   const direction = document.getElementById("flow-filter-direction").value;
   const port = document.getElementById("flow-filter-port").value;
   const ipFilter = document.getElementById("flow-filter-ip").value.toLowerCase();
+  const hideAzure = document.getElementById("flow-filter-hide-azure").checked;
   let filtered = [...allFlows];
   if (protocol) filtered = filtered.filter(f => f.protocol === protocol);
   if (port) filtered = filtered.filter(f => f.destPort === port);
   if (direction === "internal") filtered = filtered.filter(f => isPrivateIp(f.sourceIp) && isPrivateIp(f.destIp));
   if (direction === "external") filtered = filtered.filter(f => !isPrivateIp(f.sourceIp) || !isPrivateIp(f.destIp));
   if (direction === "denied") filtered = filtered.filter(f => (f.denied||0) > 0);
+  if (hideAzure) filtered = filtered.filter(f => !isAzureIp(f.sourceIp) && !isAzureIp(f.destIp));
   if (ipFilter) {
     filtered = filtered.filter(f => {
       const s = (ipMap[f.sourceIp]||"").toLowerCase(), d = (ipMap[f.destIp]||"").toLowerCase();
@@ -476,7 +484,7 @@ function renderTopology(flows) {
     links.push({ source: f.sourceIp, target: f.destIp, port: f.destPort, protocol: f.protocol,
       bytes: (f.bytesS2D||0)+(f.bytesD2S||0), allowed: f.allowed||0, denied: f.denied||0, portLabel: portLabel(f.destPort) });
   });
-  const nodes = Array.from(nodeSet).map(ip => ({ id: ip, name: ipMap[ip]||null, hasName: !!ipMap[ip], isPrivate: isPrivateIp(ip) }));
+  const nodes = Array.from(nodeSet).map(ip => ({ id: ip, name: ipMap[ip]||null, hasName: !!ipMap[ip], isPrivate: isPrivateIp(ip), isAzure: isAzureIp(ip), azureLabel: azureIps[ip]||null }));
   const maxBytes = Math.max(...links.map(l => l.bytes), 1);
   const linkScale = d3.scaleLog().domain([1, maxBytes]).range([0.5, 8]).clamp(true);
   const svg = d3.select(container).append("svg").attr("width", width).attr("height", height).attr("viewBox", [0,0,width,height]);
@@ -489,9 +497,9 @@ function renderTopology(flows) {
   const link = g.append("g").selectAll("line").data(links).join("line").attr("stroke", d => d.denied>0 ? "#f87171" : "#4b5078").attr("stroke-width", d => linkScale(d.bytes||1)).attr("stroke-opacity", 0.6).attr("marker-end", d => d.denied>0 ? "url(#arrow-denied)" : "url(#arrow-normal)");
   link.append("title").text(d => `${resolveIpFull(d.source.id||d.source)} \u2192 ${resolveIpFull(d.target.id||d.target)}\nService: ${d.portLabel} (${d.protocol})\nTraffic: ${formatBytes(d.bytes)}\nAllowed: ${d.allowed} | Denied: ${d.denied}`);
   const node = g.append("g").selectAll("g").data(nodes).join("g").call(d3.drag().on("start",(e,d)=>{if(!e.active) simulation.alphaTarget(0.3).restart();d.fx=d.x;d.fy=d.y;}).on("drag",(e,d)=>{d.fx=e.x;d.fy=e.y;}).on("end",(e,d)=>{if(!e.active) simulation.alphaTarget(0);d.fx=null;d.fy=null;}));
-  node.append("circle").attr("r", d => d.hasName ? 12 : 7).attr("fill", d => d.hasName ? "#6366f1" : d.isPrivate ? "#374151" : "#92400e").attr("stroke", d => d.hasName ? "#818cf8" : d.isPrivate ? "#6b7280" : "#d97706").attr("stroke-width", 2);
-  node.append("text").text(d => d.name || d.id).attr("dx",16).attr("dy",4).attr("fill", d => d.hasName ? "#c4b5fd" : d.isPrivate ? "#9ca3af" : "#fbbf24").attr("font-size", d => d.hasName ? "12px" : "10px").attr("font-weight", d => d.hasName ? "600" : "400");
-  node.append("title").text(d => (d.name ? `${d.name}\n${d.id}` : d.id) + `\n${d.isPrivate ? "Private IP" : "Public IP"}`);
+  node.append("circle").attr("r", d => d.hasName ? 12 : 7).attr("fill", d => d.hasName ? "#6366f1" : d.isAzure ? "#0e4f92" : d.isPrivate ? "#374151" : "#92400e").attr("stroke", d => d.hasName ? "#818cf8" : d.isAzure ? "#38bdf8" : d.isPrivate ? "#6b7280" : "#d97706").attr("stroke-width", 2);
+  node.append("text").text(d => d.name || (d.isAzure ? d.azureLabel : d.id)).attr("dx",16).attr("dy",4).attr("fill", d => d.hasName ? "#c4b5fd" : d.isAzure ? "#7dd3fc" : d.isPrivate ? "#9ca3af" : "#fbbf24").attr("font-size", d => d.hasName ? "12px" : "10px").attr("font-weight", d => d.hasName ? "600" : "400");
+  node.append("title").text(d => (d.name ? `${d.name}\n${d.id}` : d.isAzure ? `${d.azureLabel}\n${d.id}` : d.id) + `\n${d.isPrivate ? "Private IP" : d.isAzure ? "Azure/Microsoft IP" : "Public IP"}`);
   simulation.on("tick", () => { link.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y).attr("x2",d=>d.target.x).attr("y2",d=>d.target.y); node.attr("transform",d=>`translate(${d.x},${d.y})`); });
 }
 

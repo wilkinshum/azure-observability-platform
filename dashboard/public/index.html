@@ -200,8 +200,10 @@
         <h3>Network Topology Map</h3>
         <div class="info-hint">
           <strong>Purple nodes</strong> = identified Azure resources &nbsp;|&nbsp;
-          <strong>Gray nodes</strong> = unresolved IPs &nbsp;|&nbsp;
-          <strong>Red lines</strong> = denied traffic &nbsp;|&nbsp;
+          <strong style="color:#38bdf8">Blue nodes</strong> = Azure/Microsoft service IPs &nbsp;|&nbsp;
+          <strong>Gray nodes</strong> = unresolved private IPs &nbsp;|&nbsp;
+          <strong style="color:#fbbf24">Amber nodes</strong> = unknown public IPs &nbsp;|&nbsp;
+          <strong style="color:#f87171">Red lines</strong> = denied traffic &nbsp;|&nbsp;
           <strong>Line thickness</strong> = traffic volume &nbsp;|&nbsp;
           Drag nodes to rearrange • Scroll to zoom
         </div>
@@ -229,6 +231,9 @@
             <option value="6443">Kubernetes API (6443)</option>
           </select>
           <input type="text" id="flow-filter-ip" class="filter-input" placeholder="Filter by IP or resource name..." style="width:220px">
+          <label class="filter-toggle" title="Hide Azure platform IPs like health probes, load balancers, and Microsoft service endpoints">
+            <input type="checkbox" id="flow-filter-hide-azure"> Hide Azure/Microsoft IPs
+          </label>
           <button id="btn-flow-refresh" class="btn btn-primary">Apply Filters</button>
         </div>
         <div id="topology-container" style="width:100%;height:600px;position:relative;overflow:hidden;"></div>

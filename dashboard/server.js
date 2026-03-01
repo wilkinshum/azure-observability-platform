@@ -322,6 +322,117 @@ app.get("/api/network-flows/ip-map", async (req, res) => {
   }
 });
 
+// ── Azure / Microsoft well-known IP classification ──────────────────────────
+
+// Known Azure infrastructure IPs and common Microsoft service ranges
+const AZURE_WELL_KNOWN = {
+  "168.63.129.16": "Azure Load Balancer Health Probe",
+  "169.254.169.254": "Azure IMDS (Instance Metadata)",
+  "169.254.169.123": "Azure NTP",
+  "168.62.161.224": "Azure DNS Proxy",
+  "23.253.163.53": "Azure DNS",
+};
+
+// Common Azure/Microsoft CIDR ranges (public, non-exhaustive but covers most noise)
+// Source: Microsoft Azure IP ranges & Service Tags JSON
+const AZURE_CIDRS = [
+  // Azure platform / management
+  { cidr: "168.63.0.0/16", label: "Azure Platform" },
+  { cidr: "169.254.0.0/16", label: "Azure Link-Local" },
+  // Azure Front Door, CDN, Traffic Manager
+  { cidr: "13.64.0.0/11", label: "Azure Cloud" },
+  { cidr: "13.104.0.0/14", label: "Azure Cloud" },
+  { cidr: "20.33.0.0/16", label: "Azure Cloud" },
+  { cidr: "20.34.0.0/15", label: "Azure Cloud" },
+  { cidr: "20.36.0.0/14", label: "Azure Cloud" },
+  { cidr: "20.40.0.0/13", label: "Azure Cloud" },
+  { cidr: "20.48.0.0/12", label: "Azure Cloud" },
+  { cidr: "20.64.0.0/10", label: "Azure Cloud" },
+  { cidr: "20.128.0.0/16", label: "Azure Cloud" },
+  { cidr: "20.150.0.0/15", label: "Azure Cloud" },
+  { cidr: "20.160.0.0/12", label: "Azure Cloud" },
+  { cidr: "20.176.0.0/14", label: "Azure Cloud" },
+  { cidr: "20.180.0.0/14", label: "Azure Cloud" },
+  { cidr: "20.184.0.0/13", label: "Azure Cloud" },
+  { cidr: "20.192.0.0/10", label: "Azure Cloud" },
+  { cidr: "23.96.0.0/13", label: "Azure Cloud" },
+  { cidr: "23.100.0.0/15", label: "Azure Cloud" },
+  { cidr: "23.102.0.0/16", label: "Azure Cloud" },
+  { cidr: "40.64.0.0/10", label: "Azure Cloud" },
+  { cidr: "51.104.0.0/15", label: "Azure Cloud" },
+  { cidr: "51.124.0.0/16", label: "Azure Cloud" },
+  { cidr: "51.132.0.0/16", label: "Azure Cloud" },
+  { cidr: "51.136.0.0/15", label: "Azure Cloud" },
+  { cidr: "51.138.0.0/16", label: "Azure Cloud" },
+  { cidr: "51.140.0.0/14", label: "Azure Cloud" },
+  { cidr: "52.96.0.0/12", label: "Microsoft 365" },
+  { cidr: "52.112.0.0/14", label: "Microsoft Teams/Skype" },
+  { cidr: "52.120.0.0/14", label: "Azure Cloud" },
+  { cidr: "52.125.0.0/16", label: "Azure Cloud" },
+  { cidr: "52.136.0.0/13", label: "Azure Cloud" },
+  { cidr: "52.146.0.0/15", label: "Azure Cloud" },
+  { cidr: "52.148.0.0/14", label: "Azure Cloud" },
+  { cidr: "52.152.0.0/13", label: "Azure Cloud" },
+  { cidr: "52.160.0.0/11", label: "Azure Cloud" },
+  { cidr: "52.224.0.0/11", label: "Azure Cloud" },
+  { cidr: "65.52.0.0/14", label: "Azure Cloud" },
+  { cidr: "104.40.0.0/13", label: "Azure Cloud" },
+  { cidr: "104.208.0.0/13", label: "Azure Cloud" },
+  { cidr: "137.116.0.0/15", label: "Azure Cloud" },
+  { cidr: "137.135.0.0/16", label: "Azure Cloud" },
+  { cidr: "138.91.0.0/16", label: "Azure Cloud" },
+  { cidr: "157.55.0.0/16", label: "Microsoft Services" },
+  { cidr: "157.56.0.0/14", label: "Microsoft Services" },
+  { cidr: "191.232.0.0/13", label: "Azure Cloud" },
+  { cidr: "204.79.197.0/24", label: "Microsoft Services" },
+];
+
+// Parse CIDR to {network, mask}
+function parseCidr(cidr) {
+  const [ip, bits] = cidr.split("/");
+  const parts = ip.split(".").map(Number);
+  const num = (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
+  const mask = ~((1 << (32 - parseInt(bits))) - 1);
+  return { network: num & mask, mask };
+}
+
+const PARSED_CIDRS = AZURE_CIDRS.map(c => ({ ...parseCidr(c.cidr), label: c.label }));
+
+function ipToNum(ip) {
+  const p = ip.split(".").map(Number);
+  return ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
+}
+
+function classifyIp(ip) {
+  if (AZURE_WELL_KNOWN[ip]) return { isAzure: true, label: AZURE_WELL_KNOWN[ip] };
+  const num = ipToNum(ip);
+  for (const c of PARSED_CIDRS) {
+    if ((num & c.mask) === (c.network >>> 0)) return { isAzure: true, label: c.label };
+  }
+  return { isAzure: false, label: null };
+}
+
+// Classify all IPs seen in flows
+app.get("/api/network-flows/azure-ips", async (req, res) => {
+  try {
+    const { resources: flows } = await networkFlowsContainer.items.query(
+      "SELECT DISTINCT c.sourceIp, c.destIp FROM c"
+    ).fetchAll();
+
+    const result = {};
+    const seen = new Set();
+    for (const f of flows) {
+      if (f.sourceIp && !seen.has(f.sourceIp)) { seen.add(f.sourceIp); const c = classifyIp(f.sourceIp); if (c.isAzure) result[f.sourceIp] = c.label; }
+      if (f.destIp && !seen.has(f.destIp)) { seen.add(f.destIp); const c = classifyIp(f.destIp); if (c.isAzure) result[f.destIp] = c.label; }
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.error("Azure IPs error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Dashboard running on http://localhost:${PORT}`);
 });
