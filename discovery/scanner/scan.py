@@ -195,6 +195,46 @@ class DiscoveryScanner:
             logger.error(f"Failed to upsert relationship {rel_type}: {e}")
             self.stats["errors"] += 1
 
+    async def cleanup_stale_resources(self, current_resource_ids: set[str]):
+        """Remove resources from Cosmos that no longer exist in Azure."""
+        logger.info("Cleaning up stale resources...")
+        stale_count = 0
+        query = "SELECT c.id, c.resourceId, c.subscriptionId FROM c"
+        existing_items = []
+        async for page in self.resources_container.query_items(query=query).by_page():
+            async for item in page:
+                existing_items.append(item)
+        for item in existing_items:
+            if item["resourceId"] not in current_resource_ids:
+                try:
+                    await self.resources_container.delete_item(item["id"], partition_key=item["subscriptionId"])
+                    stale_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to delete stale resource {item['resourceId']}: {e}")
+                    self.stats["errors"] += 1
+        logger.info(f"Removed {stale_count} stale resources")
+        return stale_count
+
+    async def cleanup_stale_relationships(self, current_relationship_ids: set[str]):
+        """Remove relationships from Cosmos that no longer exist."""
+        logger.info("Cleaning up stale relationships...")
+        stale_count = 0
+        query = "SELECT c.id, c.sourceSubscriptionId FROM c"
+        existing_items = []
+        async for page in self.relationships_container.query_items(query=query).by_page():
+            async for item in page:
+                existing_items.append(item)
+        for item in existing_items:
+            if item["id"] not in current_relationship_ids:
+                try:
+                    await self.relationships_container.delete_item(item["id"], partition_key=item["sourceSubscriptionId"])
+                    stale_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to delete stale relationship {item['id']}: {e}")
+                    self.stats["errors"] += 1
+        logger.info(f"Removed {stale_count} stale relationships")
+        return stale_count
+
     async def scan_all_resources(self):
         """Main discovery scan."""
         logger.info("=== Starting Discovery Scan ===")
@@ -205,13 +245,18 @@ class DiscoveryScanner:
         resources = self.query_resource_graph(QUERIES["all_resources"])
         logger.info(f"Found {len(resources)} resources")
 
+        current_resource_ids = set()
         for resource in resources:
+            current_resource_ids.add(resource["id"])
             await self.upsert_resource(resource)
 
         # 2. Discover VNet peerings (relationships)
         logger.info("Scanning VNet peerings...")
+        current_relationship_ids = set()
         peerings = self.query_resource_graph(QUERIES["vnet_peerings"])
         for p in peerings:
+            rel_id = f"VNET_PEERING_{p['sourceVnetId']}_{p['remoteVnetId']}".lower().replace("/", "_")[:255]
+            current_relationship_ids.add(rel_id)
             await self.upsert_relationship(
                 p["sourceVnetId"], p["remoteVnetId"], "VNET_PEERING",
                 {"peeringName": p["peeringName"], "state": p["peeringState"]}
@@ -221,13 +266,20 @@ class DiscoveryScanner:
         logger.info("Scanning private endpoints...")
         endpoints = self.query_resource_graph(QUERIES["private_endpoints"])
         for ep in endpoints:
+            rel_id = f"PRIVATE_ENDPOINT_{ep['peId']}_{ep['targetResourceId']}".lower().replace("/", "_")[:255]
+            current_relationship_ids.add(rel_id)
             await self.upsert_relationship(
                 ep["peId"], ep["targetResourceId"], "PRIVATE_ENDPOINT",
                 {"groupIds": ep.get("groupIds", [])}
             )
 
+        # 4. Remove stale data that no longer exists in Azure
+        stale_resources = await self.cleanup_stale_resources(current_resource_ids)
+        stale_relationships = await self.cleanup_stale_relationships(current_relationship_ids)
+
         logger.info(f"=== Scan Complete ===")
         logger.info(f"Resources: {self.stats['resources']}, Relationships: {self.stats['relationships']}, Errors: {self.stats['errors']}")
+        logger.info(f"Stale removed: {stale_resources} resources, {stale_relationships} relationships")
 
     async def close(self):
         await self.cosmos_client.close()
