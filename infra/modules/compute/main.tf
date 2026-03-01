@@ -173,3 +173,12 @@ resource "azurerm_container_group" "scanner" {
 
   depends_on = [azurerm_role_assignment.acr_pull]
 }
+
+output "acr_admin_username" {
+  value = azurerm_container_registry.main.admin_username
+}
+
+output "acr_admin_password" {
+  value     = azurerm_container_registry.main.admin_password
+  sensitive = true
+}

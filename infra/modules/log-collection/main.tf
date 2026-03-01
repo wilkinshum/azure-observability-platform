@@ -132,3 +132,7 @@ output "appinsights_connection_string" {
   value     = azurerm_application_insights.main.connection_string
   sensitive = true
 }
+
+output "workspace_customer_id" {
+  value = azurerm_log_analytics_workspace.main.workspace_id
+}

@@ -21,6 +21,12 @@ provider "azurerm" {
   features {}
 }
 
+provider "azurerm" {
+  alias           = "target_sub"
+  subscription_id = "f627598e-05c5-4093-8667-5730c4026ea3"
+  features {}
+}
+
 variable "location" {
   description = "Primary deployment region"
   type        = string
@@ -119,4 +125,48 @@ output "log_analytics_workspace_id" {
 
 output "dashboard_url" {
   value = module.compute.dashboard_url
+}
+
+# ── Phase 2: Flow Mapping ────────────────────────────────────────────────────
+
+module "flow_mapping" {
+  source      = "./modules/flow-mapping"
+  location    = azurerm_resource_group.main.location
+  rg_name     = azurerm_resource_group.main.name
+  prefix      = var.prefix
+  environment = var.environment
+  tags        = local.common_tags
+
+  providers = {
+    azurerm            = azurerm
+    azurerm.target_sub = azurerm.target_sub
+  }
+
+  discovery_identity_id           = module.discovery.discovery_identity_id
+  discovery_identity_principal_id = module.discovery.discovery_identity_principal_id
+  cosmos_endpoint                 = module.discovery.cosmos_endpoint
+  cosmos_account_name             = module.discovery.cosmos_account_name
+
+  acr_login_server   = module.compute.acr_login_server
+  acr_admin_username = module.compute.acr_admin_username
+  acr_admin_password = module.compute.acr_admin_password
+
+  appinsights_connection_string = module.log_collection.appinsights_connection_string
+
+  log_analytics_workspace_id   = module.log_collection.workspace_id
+  log_analytics_workspace_guid = module.log_collection.workspace_customer_id
+
+  target_subscription_id = "f627598e-05c5-4093-8667-5730c4026ea3"
+  target_vnet_ids = [
+    "/subscriptions/f627598e-05c5-4093-8667-5730c4026ea3/resourceGroups/connected/providers/Microsoft.Network/virtualNetworks/connected-test",
+    "/subscriptions/f627598e-05c5-4093-8667-5730c4026ea3/resourceGroups/default-activitylogalerts/providers/Microsoft.Network/virtualNetworks/dev-vnet1",
+    "/subscriptions/f627598e-05c5-4093-8667-5730c4026ea3/resourceGroups/devopsagent/providers/Microsoft.Network/virtualNetworks/hub-vnet",
+    "/subscriptions/f627598e-05c5-4093-8667-5730c4026ea3/resourceGroups/es-kub/providers/Microsoft.Network/virtualNetworks/es-kub-vnet",
+    "/subscriptions/f627598e-05c5-4093-8667-5730c4026ea3/resourceGroups/networktest-rg/providers/Microsoft.Network/virtualNetworks/networktest-vnet2",
+    "/subscriptions/f627598e-05c5-4093-8667-5730c4026ea3/resourceGroups/overlaykubdev/providers/Microsoft.Network/virtualNetworks/overlaykubdev-vnet1",
+  ]
+}
+
+output "flowlogs_storage_account" {
+  value = module.flow_mapping.flowlogs_storage_account
 }

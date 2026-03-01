@@ -1,0 +1,10 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY flow-mapper/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY flow-mapper/flow_mapper.py .
+
+CMD ["python", "flow_mapper.py"]
