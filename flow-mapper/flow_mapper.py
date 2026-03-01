@@ -120,14 +120,31 @@ class FlowMapper:
         return None
 
     def _parse_flow_log(self, flow_log: dict, blob_name: str):
-        """Parse a flow log JSON and aggregate into flow_aggregates."""
+        """Parse a flow log JSON and aggregate into flow_aggregates.
+
+        VNet flow log v4 structure:
+          records[].flowRecords.flows[].flowGroups[].flowTuples[]
+        NSG flow log v2 structure (fallback):
+          records[].properties.flows[].flows[].flowTuples[]
+        """
         for record in flow_log.get("records", []):
             timestamp = record.get("time", "")
-            for flow_group in record.get("properties", {}).get("flows", []):
-                rule = flow_group.get("rule", "unknown")
-                for ft in flow_group.get("flows", []):
-                    for entry in ft.get("flowTuples", []):
-                        self._aggregate_tuple(entry, rule, timestamp)
+
+            # VNet flow log v4 format
+            flow_records = record.get("flowRecords", {}).get("flows", [])
+            if flow_records:
+                for acl_group in flow_records:
+                    for flow_group in acl_group.get("flowGroups", []):
+                        rule = flow_group.get("rule", "unknown")
+                        for entry in flow_group.get("flowTuples", []):
+                            self._aggregate_tuple(entry, rule, timestamp)
+            else:
+                # NSG flow log v2 fallback
+                for flow_group in record.get("properties", {}).get("flows", []):
+                    rule = flow_group.get("rule", "unknown")
+                    for ft in flow_group.get("flows", []):
+                        for entry in ft.get("flowTuples", []):
+                            self._aggregate_tuple(entry, rule, timestamp)
 
     def _aggregate_tuple(self, tuple_str: str, rule: str, timestamp: str):
         """Parse and aggregate a flow tuple."""

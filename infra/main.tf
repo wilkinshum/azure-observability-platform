@@ -144,6 +144,7 @@ module "flow_mapping" {
 
   discovery_identity_id           = module.discovery.discovery_identity_id
   discovery_identity_principal_id = module.discovery.discovery_identity_principal_id
+  discovery_identity_client_id    = module.discovery.discovery_identity_client_id
   cosmos_endpoint                 = module.discovery.cosmos_endpoint
   cosmos_account_name             = module.discovery.cosmos_account_name
 

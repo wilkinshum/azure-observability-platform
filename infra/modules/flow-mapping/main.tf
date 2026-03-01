@@ -35,6 +35,10 @@ variable "discovery_identity_principal_id" {
   type = string
 }
 
+variable "discovery_identity_client_id" {
+  type = string
+}
+
 variable "cosmos_endpoint" {
   type = string
 }
@@ -184,7 +188,7 @@ resource "azurerm_container_group" "flow_mapper" {
     memory = "1"
 
     environment_variables = {
-      "AZURE_CLIENT_ID"        = split("/", var.discovery_identity_id)[8]
+      "AZURE_CLIENT_ID"        = var.discovery_identity_client_id
       "STORAGE_ACCOUNT_NAME"   = data.azurerm_storage_account.flowlogs.name
       "COSMOS_ENDPOINT"        = var.cosmos_endpoint
       "COSMOS_DATABASE"        = "observability"
