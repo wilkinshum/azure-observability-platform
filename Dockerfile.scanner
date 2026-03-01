@@ -1,0 +1,19 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY discovery/scanner/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy scanner code
+COPY discovery/scanner/scan.py .
+
+# Set environment variables (can be overridden at runtime)
+ENV COSMOS_ENDPOINT=""
+ENV COSMOS_DATABASE="observability"
+ENV COSMOS_CONTAINER="resources"
+ENV COSMOS_RELATIONSHIPS_CONTAINER="relationships"
+
+# Run scanner
+CMD ["python", "scan.py"]

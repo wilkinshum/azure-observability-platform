@@ -130,3 +130,46 @@ output "dashboard_url" {
 output "dashboard_ip" {
   value = azurerm_container_group.dashboard.ip_address
 }
+
+# Scanner — scheduled via ACI with restart_policy="Never" (triggered via logic app/automation)
+# For now, deploy but don't auto-run. Can be triggered manually or via automation later.
+resource "azurerm_container_group" "scanner" {
+  name                = "${var.prefix}-${var.environment}-scanner"
+  location            = var.location
+  resource_group_name = var.rg_name
+  os_type             = "Linux"
+  ip_address_type     = "None"   # Batch job, no incoming traffic needed
+  restart_policy      = "Never"  # Doesn't auto-restart; designed for one-shot runs
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [var.discovery_identity_id]
+  }
+
+  image_registry_credential {
+    server   = azurerm_container_registry.main.login_server
+    username = azurerm_container_registry.main.admin_username
+    password = azurerm_container_registry.main.admin_password
+  }
+
+  container {
+    name   = "scanner"
+    image  = "${azurerm_container_registry.main.login_server}/azobs-scanner:latest"
+    cpu    = "1"
+    memory = "1"
+
+    environment_variables = {
+      "COSMOS_ENDPOINT"                     = var.cosmos_endpoint
+      "COSMOS_DATABASE"                     = "observability"
+      "AZURE_CLIENT_ID"                     = data.azurerm_user_assigned_identity.discovery.client_id
+    }
+
+    secure_environment_variables = {
+      "APPLICATIONINSIGHTS_CONNECTION_STRING" = var.appinsights_connection_string
+    }
+  }
+
+  tags = merge(var.tags, { component = "scanner" })
+
+  depends_on = [azurerm_role_assignment.acr_pull]
+}

@@ -34,6 +34,10 @@ resource "azurerm_cosmosdb_account" "main" {
   offer_type                    = "Standard"
   kind                          = "GlobalDocumentDB"
   local_authentication_disabled = false # Keep keys as fallback, but prefer RBAC
+  public_network_access_enabled = true  # Required for ACI dashboard access (RBAC secures auth)
+
+  # Firewall: allow VM IP + Azure datacenter services (for ACI)
+  ip_range_filter = ["20.114.171.163", "0.0.0.0"]
 
   identity {
     type = "SystemAssigned"
