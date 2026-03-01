@@ -274,42 +274,70 @@ function esc(str) {
   return div.innerHTML;
 }
 
-// ── Network Flows View ───────────────────────────────────────────────────────
+
+// -- Network Flows View -------------------------------------------------------
 let chartProtocols = null;
 let chartPorts = null;
 let ipMap = {};
+let allFlows = [];
+
+const PORT_NAMES = {
+  "22": "SSH", "25": "SMTP", "53": "DNS", "80": "HTTP", "110": "POP3",
+  "123": "NTP", "143": "IMAP", "443": "HTTPS", "445": "SMB", "587": "SMTP/TLS",
+  "993": "IMAPS", "995": "POP3S", "1433": "SQL Server", "1521": "Oracle DB",
+  "3306": "MySQL", "3389": "RDP", "5432": "PostgreSQL", "5671": "AMQP/TLS",
+  "5672": "AMQP", "5985": "WinRM/HTTP", "5986": "WinRM/HTTPS", "6379": "Redis",
+  "6443": "K8s API", "8080": "HTTP Alt", "8443": "HTTPS Alt", "8444": "HTTPS Alt",
+  "9090": "Prometheus", "9200": "Elasticsearch", "9418": "Git", "10250": "Kubelet",
+  "27017": "MongoDB", "30000": "NodePort", "30001": "NodePort", "32526": "Azure LB Health",
+};
+
+function portLabel(port) {
+  const name = PORT_NAMES[port];
+  return name ? `${name} (${port})` : `Port ${port}`;
+}
+
+function isPrivateIp(ip) {
+  if (!ip) return false;
+  return ip.startsWith("10.") || ip.startsWith("172.16.") || ip.startsWith("172.17.") ||
+    ip.startsWith("172.18.") || ip.startsWith("172.19.") || ip.startsWith("172.2") ||
+    ip.startsWith("172.3") || ip.startsWith("192.168.") || ip === "127.0.0.1";
+}
 
 async function loadNetworkFlows() {
   try {
-    const [summaryRes, ipMapRes] = await Promise.all([
+    const [summaryRes, ipMapRes, flowsRes] = await Promise.all([
       fetch("/api/network-flows/summary").then(r => r.json()),
       fetch("/api/network-flows/ip-map").then(r => r.json()),
+      fetch("/api/network-flows?limit=500").then(r => r.json()),
     ]);
     ipMap = ipMapRes;
+    allFlows = flowsRes;
 
-    // Stats
     document.getElementById("total-flows").textContent = summaryRes.totalFlows.toLocaleString();
-
     const totalBytes = summaryRes.byProtocol.reduce((sum, p) => sum + (p.totalBytes || 0), 0);
     document.getElementById("total-flow-bytes").textContent = formatBytes(totalBytes);
 
-    const tcp = summaryRes.byProtocol.find(p => p.protocol === "TCP");
-    const udp = summaryRes.byProtocol.find(p => p.protocol === "UDP");
-    document.getElementById("total-tcp").textContent = tcp ? tcp.count.toLocaleString() : "0";
-    document.getElementById("total-udp").textContent = udp ? udp.count.toLocaleString() : "0";
+    const internal = allFlows.filter(f => isPrivateIp(f.sourceIp) && isPrivateIp(f.destIp));
+    const external = allFlows.filter(f => !isPrivateIp(f.sourceIp) || !isPrivateIp(f.destIp));
+    document.getElementById("total-internal").textContent = internal.length.toLocaleString();
+    document.getElementById("total-external").textContent = external.length.toLocaleString();
 
-    document.getElementById("flow-stats").textContent = `${Object.keys(ipMap).length} IPs mapped to resources`;
+    const denied = allFlows.filter(f => (f.denied || 0) > 0);
+    document.getElementById("total-denied-flows").textContent = denied.length.toLocaleString();
 
-    // Protocol chart
+    const uniqueIps = new Set();
+    allFlows.forEach(f => { uniqueIps.add(f.sourceIp); uniqueIps.add(f.destIp); });
+    document.getElementById("total-unique-ips").textContent = uniqueIps.size.toLocaleString();
+
+    const mappedCount = Object.keys(ipMap).length;
+    document.getElementById("flow-stats").textContent =
+      `${mappedCount} IPs mapped to Azure resources`;
+
     renderProtocolChart(summaryRes.byProtocol);
-
-    // Top ports chart
     renderPortsChart(summaryRes.topPorts);
-
-    // Top talkers table
     renderTopTalkers(summaryRes.topTalkers);
-
-    // Topology
+    renderDeniedTraffic(denied);
     loadTopology();
   } catch (err) {
     console.error("Failed to load network flows:", err);
@@ -323,15 +351,14 @@ function renderProtocolChart(data) {
     type: "doughnut",
     data: {
       labels: data.map(d => d.protocol),
-      datasets: [{
-        data: data.map(d => d.count),
-        backgroundColor: ["#6366f1", "#f472b6", "#fbbf24", "#34d399"],
-        borderWidth: 0,
-      }],
+      datasets: [{ data: data.map(d => d.totalBytes || 0), backgroundColor: ["#6366f1", "#f472b6", "#fbbf24", "#34d399"], borderWidth: 0 }],
     },
     options: {
       responsive: true,
-      plugins: { legend: { position: "right", labels: { color: "#8b8fa3" } } },
+      plugins: {
+        legend: { position: "right", labels: { color: "#8b8fa3" } },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.label}: ${formatBytes(ctx.parsed)}` } },
+      },
     },
   });
 }
@@ -342,19 +369,26 @@ function renderPortsChart(data) {
   chartPorts = new Chart(ctx, {
     type: "bar",
     data: {
-      labels: data.map(d => `${d.destPort}/${d.protocol}`),
+      labels: data.map(d => portLabel(d.destPort)),
       datasets: [{
-        label: "Traffic (bytes)",
+        label: "Traffic",
         data: data.map(d => d.totalBytes || 0),
-        backgroundColor: "#8b5cf6",
+        backgroundColor: data.map(d => {
+          const p = d.destPort;
+          if (p === "443" || p === "80") return "#4ade80";
+          if (p === "22" || p === "3389") return "#fbbf24";
+          if (p === "53") return "#38bdf8";
+          if (p === "1433" || p === "5432" || p === "3306") return "#e879f9";
+          return "#8b5cf6";
+        }),
         borderRadius: 6,
       }],
     },
     options: {
       responsive: true,
-      plugins: { legend: { display: false } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => formatBytes(ctx.parsed.y) } } },
       scales: {
-        x: { ticks: { color: "#8b8fa3" }, grid: { display: false } },
+        x: { ticks: { color: "#8b8fa3", font: { size: 10 } }, grid: { display: false } },
         y: { ticks: { color: "#8b8fa3", callback: v => formatBytes(v) }, grid: { color: "#2d3044" } },
       },
     },
@@ -363,170 +397,114 @@ function renderPortsChart(data) {
 
 function renderTopTalkers(flows) {
   const tbody = document.getElementById("flows-body");
-  if (!flows.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="loading">No flows found</td></tr>';
-    return;
-  }
-  tbody.innerHTML = flows.map(f => `
-    <tr>
-      <td title="${esc(f.sourceIp)}">${esc(resolveIp(f.sourceIp))}</td>
-      <td title="${esc(f.destIp)}">${esc(resolveIp(f.destIp))}</td>
-      <td>${esc(f.destPort)}</td>
-      <td><span class="tag">${esc(f.protocol)}</span></td>
+  if (!flows.length) { tbody.innerHTML = '<tr><td colspan="8" class="loading">No flows found</td></tr>'; return; }
+  const sorted = [...flows].sort((a, b) => ((b.bytesS2D||0)+(b.bytesD2S||0)) - ((a.bytesS2D||0)+(a.bytesD2S||0)));
+  tbody.innerHTML = sorted.map(f => {
+    const total = (f.bytesS2D || 0) + (f.bytesD2S || 0);
+    const hasDenied = (f.denied || 0) > 0;
+    const isInternal = isPrivateIp(f.sourceIp) && isPrivateIp(f.destIp);
+    const statusIcon = hasDenied ? '\u{1F6AB}' : '\u2705';
+    const statusText = hasDenied ? `${f.denied} denied` : `${f.allowed || 0} allowed`;
+    const dirTag = isInternal ? '<span class="tag tag-internal">Internal</span>' : '<span class="tag tag-external">External</span>';
+    return `<tr class="${hasDenied ? 'row-denied' : ''}">
+      <td title="${esc(f.sourceIp)}">${esc(resolveIpFull(f.sourceIp))}</td>
+      <td title="${esc(f.destIp)}">${esc(resolveIpFull(f.destIp))}</td>
+      <td>${esc(portLabel(f.destPort))}</td>
+      <td><span class="tag">${esc(f.protocol)}</span> ${dirTag}</td>
       <td>${formatBytes(f.bytesS2D || 0)}</td>
       <td>${formatBytes(f.bytesD2S || 0)}</td>
-      <td style="color:#4ade80">${(f.allowed || 0).toLocaleString()}</td>
-      <td style="color:${f.denied > 0 ? '#f87171' : '#8b8fa3'}">${(f.denied || 0).toLocaleString()}</td>
-    </tr>
-  `).join("");
+      <td><strong>${formatBytes(total)}</strong></td>
+      <td>${statusIcon} ${statusText}</td>
+    </tr>`;
+  }).join("");
 }
 
-function resolveIp(ip) {
-  if (!ip) return "—";
+function renderDeniedTraffic(denied) {
+  const section = document.getElementById("denied-section");
+  if (!denied.length) { section.style.display = "none"; return; }
+  section.style.display = "block";
+  const tbody = document.getElementById("denied-body");
+  const sorted = [...denied].sort((a, b) => (b.denied||0) - (a.denied||0));
+  tbody.innerHTML = sorted.map(f => `<tr>
+    <td title="${esc(f.sourceIp)}">${esc(resolveIpFull(f.sourceIp))}</td>
+    <td title="${esc(f.destIp)}">${esc(resolveIpFull(f.destIp))}</td>
+    <td>${esc(portLabel(f.destPort))}</td>
+    <td><span class="tag">${esc(f.protocol)}</span></td>
+    <td style="color:#f87171;font-weight:600">${(f.denied||0).toLocaleString()}</td>
+    <td>${(f.rules||[]).map(r => '<span class="tag">'+esc(r)+'</span>').join(" ")}</td>
+  </tr>`).join("");
+}
+
+function resolveIp(ip) { return ip ? (ipMap[ip] || ip) : "\u2014"; }
+function resolveIpFull(ip) {
+  if (!ip) return "\u2014";
   const name = ipMap[ip];
-  return name ? `${name} (${ip})` : ip;
+  if (name) return `${name} (${ip})`;
+  return isPrivateIp(ip) ? `${ip} [private]` : `${ip} [public]`;
 }
 
 async function loadTopology() {
   const protocol = document.getElementById("flow-filter-protocol").value;
-  const minBytes = document.getElementById("flow-filter-min-bytes").value;
-  const params = new URLSearchParams({ limit: 150 });
-  if (protocol) params.set("protocol", protocol);
-  if (minBytes) params.set("minBytes", minBytes);
-
-  try {
-    const flows = await fetch(`/api/network-flows?${params}`).then(r => r.json());
-    renderTopology(flows);
-  } catch (err) {
-    console.error("Failed to load topology:", err);
+  const direction = document.getElementById("flow-filter-direction").value;
+  const port = document.getElementById("flow-filter-port").value;
+  const ipFilter = document.getElementById("flow-filter-ip").value.toLowerCase();
+  let filtered = [...allFlows];
+  if (protocol) filtered = filtered.filter(f => f.protocol === protocol);
+  if (port) filtered = filtered.filter(f => f.destPort === port);
+  if (direction === "internal") filtered = filtered.filter(f => isPrivateIp(f.sourceIp) && isPrivateIp(f.destIp));
+  if (direction === "external") filtered = filtered.filter(f => !isPrivateIp(f.sourceIp) || !isPrivateIp(f.destIp));
+  if (direction === "denied") filtered = filtered.filter(f => (f.denied||0) > 0);
+  if (ipFilter) {
+    filtered = filtered.filter(f => {
+      const s = (ipMap[f.sourceIp]||"").toLowerCase(), d = (ipMap[f.destIp]||"").toLowerCase();
+      return f.sourceIp.includes(ipFilter) || f.destIp.includes(ipFilter) || s.includes(ipFilter) || d.includes(ipFilter);
+    });
   }
+  filtered.sort((a,b) => ((b.bytesS2D||0)+(b.bytesD2S||0)) - ((a.bytesS2D||0)+(a.bytesD2S||0)));
+  filtered = filtered.slice(0, 100);
+  renderTopology(filtered);
 }
 
 function renderTopology(flows) {
   const container = document.getElementById("topology-container");
   container.innerHTML = "";
-
-  if (!flows.length) {
-    container.innerHTML = '<div style="color:#8b8fa3;text-align:center;padding:40px">No flows to display</div>';
-    return;
-  }
-
-  const width = container.clientWidth;
-  const height = 600;
-
-  // Build nodes and links
-  const nodeSet = new Set();
-  const links = [];
-
+  if (!flows.length) { container.innerHTML = '<div style="color:#8b8fa3;text-align:center;padding:40px">No flows match filters.</div>'; return; }
+  const width = container.clientWidth, height = 600;
+  const nodeSet = new Set(), links = [];
   flows.forEach(f => {
-    nodeSet.add(f.sourceIp);
-    nodeSet.add(f.destIp);
-    links.push({
-      source: f.sourceIp,
-      target: f.destIp,
-      port: f.destPort,
-      protocol: f.protocol,
-      bytes: (f.bytesS2D || 0) + (f.bytesD2S || 0),
-      allowed: f.allowed || 0,
-      denied: f.denied || 0,
-    });
+    nodeSet.add(f.sourceIp); nodeSet.add(f.destIp);
+    links.push({ source: f.sourceIp, target: f.destIp, port: f.destPort, protocol: f.protocol,
+      bytes: (f.bytesS2D||0)+(f.bytesD2S||0), allowed: f.allowed||0, denied: f.denied||0, portLabel: portLabel(f.destPort) });
   });
-
-  const nodes = Array.from(nodeSet).map(ip => ({
-    id: ip,
-    name: ipMap[ip] || null,
-    hasName: !!ipMap[ip],
-  }));
-
-  // Scale link width by bytes
+  const nodes = Array.from(nodeSet).map(ip => ({ id: ip, name: ipMap[ip]||null, hasName: !!ipMap[ip], isPrivate: isPrivateIp(ip) }));
   const maxBytes = Math.max(...links.map(l => l.bytes), 1);
-  const linkScale = d3.scaleLog().domain([1, maxBytes]).range([0.5, 6]).clamp(true);
-
-  const svg = d3.select(container).append("svg")
-    .attr("width", width)
-    .attr("height", height)
-    .attr("viewBox", [0, 0, width, height]);
-
-  // Zoom
+  const linkScale = d3.scaleLog().domain([1, maxBytes]).range([0.5, 8]).clamp(true);
+  const svg = d3.select(container).append("svg").attr("width", width).attr("height", height).attr("viewBox", [0,0,width,height]);
   const g = svg.append("g");
   svg.call(d3.zoom().scaleExtent([0.2, 5]).on("zoom", (e) => g.attr("transform", e.transform)));
-
-  // Arrow markers
-  svg.append("defs").append("marker")
-    .attr("id", "arrowhead").attr("viewBox", "0 -5 10 10")
-    .attr("refX", 20).attr("refY", 0)
-    .attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto")
-    .append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", "#4b5078");
-
-  const simulation = d3.forceSimulation(nodes)
-    .force("link", d3.forceLink(links).id(d => d.id).distance(120))
-    .force("charge", d3.forceManyBody().strength(-200))
-    .force("center", d3.forceCenter(width / 2, height / 2))
-    .force("collision", d3.forceCollide().radius(30));
-
-  // Links
-  const link = g.append("g").selectAll("line")
-    .data(links).join("line")
-    .attr("stroke", d => d.denied > 0 ? "#f87171" : "#4b5078")
-    .attr("stroke-width", d => linkScale(d.bytes || 1))
-    .attr("stroke-opacity", 0.6)
-    .attr("marker-end", "url(#arrowhead)");
-
-  // Link tooltips
-  link.append("title").text(d =>
-    `${resolveIp(d.source.id || d.source)} → ${resolveIp(d.target.id || d.target)}\n` +
-    `Port: ${d.port}/${d.protocol}\n` +
-    `Traffic: ${formatBytes(d.bytes)}\n` +
-    `Allowed: ${d.allowed} | Denied: ${d.denied}`
-  );
-
-  // Nodes
-  const node = g.append("g").selectAll("g")
-    .data(nodes).join("g")
-    .call(d3.drag()
-      .on("start", (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-      .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
-      .on("end", (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
-    );
-
-  node.append("circle")
-    .attr("r", d => d.hasName ? 10 : 6)
-    .attr("fill", d => d.hasName ? "#6366f1" : "#4b5078")
-    .attr("stroke", d => d.hasName ? "#818cf8" : "#5b6094")
-    .attr("stroke-width", 2);
-
-  // Labels — show resource name if resolved, otherwise IP
-  node.append("text")
-    .text(d => d.name || d.id)
-    .attr("dx", 14).attr("dy", 4)
-    .attr("fill", d => d.hasName ? "#c4b5fd" : "#8b8fa3")
-    .attr("font-size", d => d.hasName ? "12px" : "10px")
-    .attr("font-weight", d => d.hasName ? "600" : "400");
-
-  // Node tooltips
-  node.append("title").text(d =>
-    d.name ? `${d.name}\n${d.id}` : d.id
-  );
-
-  simulation.on("tick", () => {
-    link
-      .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
-      .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
-    node.attr("transform", d => `translate(${d.x},${d.y})`);
-  });
+  const defs = svg.append("defs");
+  defs.append("marker").attr("id","arrow-normal").attr("viewBox","0 -5 10 10").attr("refX",22).attr("refY",0).attr("markerWidth",6).attr("markerHeight",6).attr("orient","auto").append("path").attr("d","M0,-4L10,0L0,4").attr("fill","#4b5078");
+  defs.append("marker").attr("id","arrow-denied").attr("viewBox","0 -5 10 10").attr("refX",22).attr("refY",0).attr("markerWidth",6).attr("markerHeight",6).attr("orient","auto").append("path").attr("d","M0,-4L10,0L0,4").attr("fill","#f87171");
+  const simulation = d3.forceSimulation(nodes).force("link", d3.forceLink(links).id(d=>d.id).distance(140)).force("charge", d3.forceManyBody().strength(-300)).force("center", d3.forceCenter(width/2, height/2)).force("collision", d3.forceCollide().radius(35));
+  const link = g.append("g").selectAll("line").data(links).join("line").attr("stroke", d => d.denied>0 ? "#f87171" : "#4b5078").attr("stroke-width", d => linkScale(d.bytes||1)).attr("stroke-opacity", 0.6).attr("marker-end", d => d.denied>0 ? "url(#arrow-denied)" : "url(#arrow-normal)");
+  link.append("title").text(d => `${resolveIpFull(d.source.id||d.source)} \u2192 ${resolveIpFull(d.target.id||d.target)}\nService: ${d.portLabel} (${d.protocol})\nTraffic: ${formatBytes(d.bytes)}\nAllowed: ${d.allowed} | Denied: ${d.denied}`);
+  const node = g.append("g").selectAll("g").data(nodes).join("g").call(d3.drag().on("start",(e,d)=>{if(!e.active) simulation.alphaTarget(0.3).restart();d.fx=d.x;d.fy=d.y;}).on("drag",(e,d)=>{d.fx=e.x;d.fy=e.y;}).on("end",(e,d)=>{if(!e.active) simulation.alphaTarget(0);d.fx=null;d.fy=null;}));
+  node.append("circle").attr("r", d => d.hasName ? 12 : 7).attr("fill", d => d.hasName ? "#6366f1" : d.isPrivate ? "#374151" : "#92400e").attr("stroke", d => d.hasName ? "#818cf8" : d.isPrivate ? "#6b7280" : "#d97706").attr("stroke-width", 2);
+  node.append("text").text(d => d.name || d.id).attr("dx",16).attr("dy",4).attr("fill", d => d.hasName ? "#c4b5fd" : d.isPrivate ? "#9ca3af" : "#fbbf24").attr("font-size", d => d.hasName ? "12px" : "10px").attr("font-weight", d => d.hasName ? "600" : "400");
+  node.append("title").text(d => (d.name ? `${d.name}\n${d.id}` : d.id) + `\n${d.isPrivate ? "Private IP" : "Public IP"}`);
+  simulation.on("tick", () => { link.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y).attr("x2",d=>d.target.x).attr("y2",d=>d.target.y); node.attr("transform",d=>`translate(${d.x},${d.y})`); });
 }
 
 function formatBytes(bytes) {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  if (!bytes || bytes === 0) return "0 B";
+  const k = 1024, sizes = ["B","KB","MB","GB","TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
 
-// Flow filter events
 document.getElementById("btn-flow-refresh")?.addEventListener("click", loadTopology);
+document.getElementById("flow-filter-ip")?.addEventListener("keydown", (e) => { if (e.key === "Enter") loadTopology(); });
 
-// ── Init ─────────────────────────────────────────────────────────────────────
+// -- Init ---------------------------------------------------------------------
 loadOverview();
 loadFilters();

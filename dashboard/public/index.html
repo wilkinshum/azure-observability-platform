@@ -141,69 +141,141 @@
         <span id="flow-stats" class="badge">Loading...</span>
       </div>
 
+      <!-- Explanation banner -->
+      <div class="info-banner">
+        <strong>What is this?</strong> Network flows show real traffic between your Azure resources — which VMs, load balancers,
+        and services are talking to each other, on which ports, and how much data is moving. Flows are captured from
+        <a href="https://learn.microsoft.com/en-us/azure/network-watcher/vnet-flow-logs-overview" target="_blank" style="color:#818cf8">VNet Flow Logs</a>
+        on 6 monitored virtual networks.
+      </div>
+
+      <!-- Summary stats -->
       <div class="stats-grid">
         <div class="stat-card">
           <div class="stat-value" id="total-flows">—</div>
-          <div class="stat-label">Unique Flows</div>
+          <div class="stat-label">Unique Conversations</div>
+          <div class="stat-hint">Distinct source→dest+port combos</div>
         </div>
         <div class="stat-card">
           <div class="stat-value" id="total-flow-bytes">—</div>
-          <div class="stat-label">Total Traffic</div>
+          <div class="stat-label">Total Data Transferred</div>
+          <div class="stat-hint">Both directions combined</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value" id="total-tcp">—</div>
-          <div class="stat-label">TCP Flows</div>
+          <div class="stat-value" id="total-internal">—</div>
+          <div class="stat-label">Internal Flows</div>
+          <div class="stat-hint">Private→Private (10.x, 172.x, 192.168.x)</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value" id="total-udp">—</div>
-          <div class="stat-label">UDP Flows</div>
+          <div class="stat-value" id="total-external">—</div>
+          <div class="stat-label">External Flows</div>
+          <div class="stat-hint">Involving public IPs</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="total-denied-flows">—</div>
+          <div class="stat-label">Denied Flows</div>
+          <div class="stat-hint" style="color:#f87171">Blocked by NSG rules</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="total-unique-ips">—</div>
+          <div class="stat-label">Unique IPs Seen</div>
+          <div class="stat-hint">Sources + destinations</div>
         </div>
       </div>
 
+      <!-- Charts -->
       <div class="charts-grid">
         <div class="chart-card">
           <h3>Traffic by Protocol</h3>
           <canvas id="chart-protocols"></canvas>
         </div>
         <div class="chart-card">
-          <h3>Top Destination Ports</h3>
+          <h3>Top Services (by Destination Port)</h3>
           <canvas id="chart-ports"></canvas>
         </div>
       </div>
 
+      <!-- Topology -->
       <div class="chart-card full-width">
-        <h3>Network Topology</h3>
+        <h3>Network Topology Map</h3>
+        <div class="info-hint">
+          <strong>Purple nodes</strong> = identified Azure resources &nbsp;|&nbsp;
+          <strong>Gray nodes</strong> = unresolved IPs &nbsp;|&nbsp;
+          <strong>Red lines</strong> = denied traffic &nbsp;|&nbsp;
+          <strong>Line thickness</strong> = traffic volume &nbsp;|&nbsp;
+          Drag nodes to rearrange • Scroll to zoom
+        </div>
         <div class="flow-filters">
           <select id="flow-filter-protocol" class="filter-select" style="width:auto">
             <option value="">All Protocols</option>
             <option value="TCP">TCP</option>
             <option value="UDP">UDP</option>
           </select>
-          <input type="number" id="flow-filter-min-bytes" class="filter-input" placeholder="Min bytes..." style="width:150px">
-          <button id="btn-flow-refresh" class="btn btn-primary">Refresh</button>
+          <select id="flow-filter-direction" class="filter-select" style="width:auto">
+            <option value="">All Traffic</option>
+            <option value="internal">Internal Only (Private↔Private)</option>
+            <option value="external">External (Public IPs involved)</option>
+            <option value="denied">Denied Only (Blocked by NSG)</option>
+          </select>
+          <select id="flow-filter-port" class="filter-select" style="width:auto">
+            <option value="">All Ports</option>
+            <option value="443">HTTPS (443)</option>
+            <option value="80">HTTP (80)</option>
+            <option value="22">SSH (22)</option>
+            <option value="3389">RDP (3389)</option>
+            <option value="53">DNS (53)</option>
+            <option value="1433">SQL Server (1433)</option>
+            <option value="5432">PostgreSQL (5432)</option>
+            <option value="6443">Kubernetes API (6443)</option>
+          </select>
+          <input type="text" id="flow-filter-ip" class="filter-input" placeholder="Filter by IP or resource name..." style="width:220px">
+          <button id="btn-flow-refresh" class="btn btn-primary">Apply Filters</button>
         </div>
         <div id="topology-container" style="width:100%;height:600px;position:relative;overflow:hidden;"></div>
       </div>
 
+      <!-- Top Talkers -->
       <div class="chart-card full-width">
-        <h3>Top Talkers</h3>
+        <h3>Top Conversations</h3>
+        <p class="chart-desc">Busiest network conversations ranked by total data transferred. Resource names shown where IPs can be mapped to Azure NICs, Public IPs, or Load Balancers.</p>
         <div class="table-container">
           <table id="flows-table">
             <thead>
               <tr>
                 <th>Source</th>
                 <th>Destination</th>
-                <th>Port</th>
+                <th>Service / Port</th>
                 <th>Protocol</th>
-                <th>Bytes →</th>
-                <th>Bytes ←</th>
-                <th>Allowed</th>
-                <th>Denied</th>
+                <th>Data Sent →</th>
+                <th>Data Received ←</th>
+                <th>Total</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody id="flows-body">
               <tr><td colspan="8" class="loading">Loading flows...</td></tr>
             </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Denied traffic -->
+      <div class="chart-card full-width" id="denied-section" style="display:none">
+        <h3 style="color:#f87171">⚠️ Denied Traffic</h3>
+        <p class="chart-desc">These connections were blocked by NSG rules. This could indicate misconfigured rules, security policy enforcement, or unauthorized access attempts.</p>
+        <div class="table-container">
+          <table id="denied-table">
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>Destination</th>
+                <th>Service / Port</th>
+                <th>Protocol</th>
+                <th>Deny Count</th>
+                <th>NSG Rules</th>
+              </tr>
+            </thead>
+            <tbody id="denied-body"></tbody>
           </table>
         </div>
       </div>
